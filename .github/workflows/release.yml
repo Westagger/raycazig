@@ -1,0 +1,71 @@
+name: release
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: '0.15.2'
+
+      - name: install SDL2 (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt update && sudo apt install -y libsdl2-dev
+
+      - name: install SDL2 (macos)
+        if: matrix.os == 'macos-latest'
+        run: brew install sdl2
+
+      - name: install SDL2 (windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          curl -L -o sdl2.zip https://github.com/libsdl-org/SDL/releases/download/release-2.30.2/SDL2-devel-2.30.2-mingw.zip
+          unzip -q sdl2.zip
+          rm SDL2-2.30.2/x86_64-w64-mingw32/lib/libSDL2.a
+          mv SDL2-2.30.2/x86_64-w64-mingw32/lib/libSDL2.dll.a SDL2-2.30.2/x86_64-w64-mingw32/lib/libSDL2.a
+          echo "SDL2_DIR=$PWD/SDL2-2.30.2" >> $GITHUB_ENV
+
+      - name: build (unix)
+        if: matrix.os != 'windows-latest'
+        run: zig build -Doptimize=ReleaseFast
+
+      - name: build (windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: zig build -Doptimize=ReleaseFast -Dtarget=x86_64-windows-gnu "-Dsdl2=$SDL2_DIR/x86_64-w64-mingw32"
+
+      - name: package (unix)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: zip -j raycazig-${{ matrix.os }}.zip zig-out/bin/raycazig
+
+      - name: package (windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          cp "$SDL2_DIR/x86_64-w64-mingw32/bin/SDL2.dll" zig-out/bin/
+          7z a raycazig-${{ matrix.os }}.zip ./zig-out/bin/raycazig.exe ./zig-out/bin/SDL2.dll
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: raycazig-${{ matrix.os }}
+          path: raycazig-${{ matrix.os }}.zip
+
+      - uses: ncipollo/release-action@v1
+        with:
+          artifacts: raycazig-${{ matrix.os }}.zip
+          tag: ${{ github.event.release.tag_name }}
+          allowUpdates: true
